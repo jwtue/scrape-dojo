@@ -8,6 +8,7 @@
         "click",
         "delay",
         "download",
+        "evaluate",
         "extract",
         "extractAll",
         "fileExists",
