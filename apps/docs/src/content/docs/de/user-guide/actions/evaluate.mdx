@@ -1,0 +1,83 @@
+---
+title: "evaluate"
+description: "JavaScript im Seitenkontext ausführen und das Ergebnis weiterverwenden"
+sidebar:
+  order: 16
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Manchmal reicht ein Selektor nicht. Du willst Elemente zählen, einen Wert lesen, den das DOM nur über eine API herausrückt, oder etwas auslösen, worum sich sonst das JavaScript der Seite kümmert. Die `evaluate`-Action führt einen JavaScript-Ausdruck **in der Seite** aus und gibt dessen Wert an den Workflow zurück.
+
+## ⚙️ Parameter
+
+| Parameter | Typ | Pflicht | Default | Beschreibung |
+|-----------|-----|---------|---------|-------------|
+| `expression` | `string` | Ja | — | JavaScript, das im Seitenkontext ausgewertet wird. Sein Wert wird zum Ergebnis der Action. |
+| `waitForNavigation` | `boolean` | Nein | `false` | Auf eine Navigation warten, die der Ausdruck auslöst (z.B. ein Formular-Submit). |
+| `waitUntil` | `string` | Nein | `networkidle2` | Lifecycle-Event, auf das gewartet wird — nur in Verbindung mit `waitForNavigation`. |
+| `timeout` | `number` | Nein | `30000` | Maximale Wartezeit auf diese Navigation in Millisekunden. |
+| `optional` | `boolean` | Nein | `false` | Wenn `true`, wird ein Fehler nur geloggt und `null` zurückgegeben, statt den Lauf abzubrechen. |
+
+Das Ergebnis muss serialisierbar sein — DOM-Knoten sind es nicht. Gib Primitive, Arrays oder einfache Objekte zurück. Ein Ausdruck ohne Rückgabewert liefert `null`.
+
+<Aside type="tip">
+`expression` läuft wie jeder andere Parameter durch Handlebars, `{{previousData.meinWert}}` funktioniert also im Skript.
+</Aside>
+
+## 💡 Beispiele
+
+### 🔢 Etwas lesen, das kein Selektor hergibt
+
+```jsonc
+{
+  "name": "bestellAnzahl",
+  "action": "evaluate",
+  "params": {
+    "expression": "document.querySelectorAll('.order-card').length"
+  }
+}
+```
+
+Anders als `extract`, das eine Property als Text liest, kommt hier eine echte Zahl zurück, mit der `transform` oder `skipIf` weiterarbeiten können.
+
+### 📤 Ein Formular abschicken, das der Seiten-Handler blockiert
+
+Manche Seiten hängen einen Submit-Handler davor, der Klicks ignoriert, die nicht von einer echten Person kommen. Ein nativer Formular-Submit geht daran vorbei und schickt das Formular mit allen versteckten Feldern:
+
+```jsonc
+{
+  "name": "loginAbschicken",
+  "action": "evaluate",
+  "params": {
+    "expression": "HTMLFormElement.prototype.submit.call(document.forms.signIn)",
+    "waitForNavigation": true
+  }
+}
+```
+
+<Aside type="caution">
+Setze `waitForNavigation`, sobald der Ausdruck die Seite verlässt. Ohne das läuft die nächste Action womöglich gegen eine Seite, die gerade abgeräumt wird.
+</Aside>
+
+### ⌨️ Ein Feld füllen, das ein Framework verwaltet
+
+React und Konsorten hören auf Events, statt `value` zu lesen. Über den nativen Setter schreiben und das Event auslösen — dann bekommt das Framework es mit:
+
+```jsonc
+{
+  "name": "suchbegriffSetzen",
+  "action": "evaluate",
+  "params": {
+    "expression": "(() => { const el = document.querySelector('#search'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(el, '{{previousData.suchbegriff}}'); el.dispatchEvent(new Event('input', { bubbles: true })); return el.value; })()"
+  }
+}
+```
+
+Mehrere Anweisungen brauchen eine IIFE wie oben — die Action wertet genau einen Ausdruck aus.
+
+## 🔍 Gut zu wissen
+
+- **Die Content Security Policy steht nicht im Weg.** Puppeteer wertet den String über das DevTools-Protokoll aus, nicht als Seitenskript — `unsafe-eval`-Regeln der Seite greifen dort nicht.
+- **Der Ausdruck läuft mit allen Rechten der Seite** — gleiche Origin, gleiche Cookies, gleiches DOM. Behandle eine Scrape-Konfiguration wie Code, den du selbst ausführst, denn genau das ist sie.
+- **Fehler in der Seite werden zu Fehlern der Action.** Ein `ReferenceError` lässt den Schritt scheitern, sofern du nicht `optional` setzt.

@@ -1,0 +1,83 @@
+---
+title: "evaluate"
+description: "Run JavaScript in the page context and use its result"
+sidebar:
+  order: 16
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Sometimes a selector isn't enough. You need to count elements, read a value the DOM only exposes through an API, or trigger something the page's own JavaScript would normally handle. The `evaluate` action runs a JavaScript expression **inside the page** and hands its value back to the workflow.
+
+## ⚙️ Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `expression` | `string` | Yes | — | JavaScript evaluated in the page context. Its value becomes the action's result. |
+| `waitForNavigation` | `boolean` | No | `false` | Wait for a navigation that the expression triggers (e.g. a form submit). |
+| `waitUntil` | `string` | No | `networkidle2` | Lifecycle event to wait for — only used with `waitForNavigation`. |
+| `timeout` | `number` | No | `30000` | Maximum time in milliseconds to wait for that navigation. |
+| `optional` | `boolean` | No | `false` | If `true`, a failing expression logs a warning and returns `null` instead of throwing. |
+
+The result must be serializable — DOM nodes are not. Return primitives, arrays or plain objects. An expression that returns nothing yields `null`.
+
+<Aside type="tip">
+`expression` goes through Handlebars like every other parameter, so `{{previousData.myValue}}` works inside the script.
+</Aside>
+
+## 💡 Examples
+
+### 🔢 Read something a selector can't give you
+
+```jsonc
+{
+  "name": "orderCount",
+  "action": "evaluate",
+  "params": {
+    "expression": "document.querySelectorAll('.order-card').length"
+  }
+}
+```
+
+Unlike `extract`, which reads a property as text, this returns a real number you can use in `transform` or `skipIf`.
+
+### 📤 Submit a form the page's own handler would block
+
+Some sites attach a submit handler that ignores clicks which didn't come from a real user. A native form submit goes around it and sends the form with all its hidden fields:
+
+```jsonc
+{
+  "name": "submitLogin",
+  "action": "evaluate",
+  "params": {
+    "expression": "HTMLFormElement.prototype.submit.call(document.forms.signIn)",
+    "waitForNavigation": true
+  }
+}
+```
+
+<Aside type="caution">
+Set `waitForNavigation` whenever the expression leaves the page. Without it the next action may run against a page that is already being torn down.
+</Aside>
+
+### ⌨️ Fill an input that a framework controls
+
+React and friends listen for events rather than reading `value`. Writing through the native setter and dispatching the event makes the framework notice:
+
+```jsonc
+{
+  "name": "setSearchTerm",
+  "action": "evaluate",
+  "params": {
+    "expression": "(() => { const el = document.querySelector('#search'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(el, '{{previousData.searchTerm}}'); el.dispatchEvent(new Event('input', { bubbles: true })); return el.value; })()"
+  }
+}
+```
+
+Several statements need an IIFE like above — the action evaluates a single expression.
+
+## 🔍 Good to know
+
+- **Content Security Policy is not in the way.** Puppeteer evaluates the string over the DevTools protocol, not as page script, so a site's `unsafe-eval` restrictions don't apply.
+- **The expression runs with the page's full privileges** — same origin, same cookies, same DOM. Treat a scrape config like code you run yourself, because that is what it is.
+- **Errors inside the page become action errors.** A `ReferenceError` fails the step unless you set `optional`.
