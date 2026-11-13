@@ -4,6 +4,7 @@ import { Action } from '../_decorators/action.decorator';
 import * as fs from 'fs';
 import * as path from 'path';
 import { URL } from 'url';
+import { withScrapeSubfolder } from './_helpers/scrape-subfolder.helper';
 
 export type DownloadActionParams = {
   url: string; // Die URL, die heruntergeladen werden soll
@@ -41,47 +42,11 @@ export class DownloadAction extends BaseAction<DownloadActionParams> {
       }
 
       // Erstelle Unterordner mit scrapeId für bessere Organisation
-      // Der scrapeId wird nach dem ersten Verzeichnis eingefügt
-      const scrapeId = this.data?.scrapeId;
-      let targetPath = downloadPath;
-
-      if (scrapeId) {
-        // Zerlege den Pfad in Segmente und füge scrapeId nach dem Root ein
-        const normalizedPath = downloadPath.replace(/\\/g, '/');
-        const segments = normalizedPath.split('/').filter((s) => s !== '');
-
-        if (segments.length > 0) {
-          // Finde den Root-Teil (z.B. "./downloads" oder "downloads" oder "C:/downloads")
-          const rootParts: string[] = [];
-          let restParts: string[] = [];
-
-          // Behandle relative Pfade (., ..)
-          let i = 0;
-          while (
-            i < segments.length &&
-            (segments[i] === '.' || segments[i] === '..')
-          ) {
-            rootParts.push(segments[i]);
-            i++;
-          }
-
-          // Das erste "echte" Verzeichnis ist auch Teil des Roots
-          if (i < segments.length) {
-            rootParts.push(segments[i]);
-            i++;
-          }
-
-          // Der Rest kommt nach dem scrapeId
-          restParts = segments.slice(i);
-
-          // Setze den neuen Pfad zusammen: root + scrapeId + rest
-          targetPath = [...rootParts, scrapeId, ...restParts].join('/');
-          this.logger.debug(
-            `📂 Reorganized path with scrape subfolder: ${targetPath}`,
-          );
-        } else {
-          targetPath = path.join(downloadPath, scrapeId);
-        }
+      const targetPath = withScrapeSubfolder(downloadPath, this.data?.scrapeId);
+      if (targetPath !== downloadPath) {
+        this.logger.debug(
+          `📂 Reorganized path with scrape subfolder: ${targetPath}`,
+        );
       }
 
       // Stelle sicher, dass das Zielverzeichnis existiert

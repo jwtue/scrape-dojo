@@ -16,6 +16,7 @@ import './logger.action';
 import './loop.action';
 import './navigate.action';
 import './notify.action';
+import './pdf.action';
 import './screenshot.action';
 import './skip-if.action';
 import './store-data.action';
