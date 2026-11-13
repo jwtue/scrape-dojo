@@ -148,6 +148,7 @@
     "loop": "Loop",
     "transform": "Transform",
     "download": "Download",
+    "pdf": "PDF",
     "screenshot": "Screenshot",
     "delay": "Delay",
     "waitForSelector": "Wait for Selector",
