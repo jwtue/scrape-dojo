@@ -5,6 +5,7 @@ import './click.action';
 import './delay.actions';
 import './display.action';
 import './download.actions';
+import './evaluate.action';
 import './extract.action';
 import './extractAll.action';
 import './file-exists.action';
