@@ -151,6 +151,7 @@
     "navigate": "Navigieren",
     "click": "Klicken",
     "type": "Tippen",
+    "evaluate": "Ausführen",
     "extract": "Extrahieren",
     "extractAll": "Alle Extrahieren",
     "loop": "Schleife",

@@ -142,6 +142,7 @@
     "navigate": "Navigate",
     "click": "Click",
     "type": "Type",
+    "evaluate": "Evaluate",
     "extract": "Extract",
     "extractAll": "Extract All",
     "loop": "Loop",
