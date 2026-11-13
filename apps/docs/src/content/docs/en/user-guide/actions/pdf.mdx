@@ -1,0 +1,83 @@
+---
+title: "pdf"
+description: "Save the current page as a PDF file"
+sidebar:
+  order: 49
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Not every document you want to keep is behind a download link. Plenty of portals show an invoice or a receipt as a web page and offer no file at all. The `pdf` action prints the current page to a PDF, so it ends up on disk like any downloaded file — with a real text layer, not a picture of one.
+
+## ⚙️ Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `filename` | `string` | Yes | — | Target file name; `.pdf` is appended when missing. |
+| `path` | `string` | No | `./downloads` | Target directory. Like `download`, the scrape id is inserted as a subfolder. |
+| `format` | `string` | No | `A4` | Paper format, e.g. `A4`, `Letter`. |
+| `landscape` | `boolean` | No | `false` | Landscape instead of portrait. |
+| `printBackground` | `boolean` | No | `true` | Include background colours and images. |
+| `scale` | `number` | No | — | Scale between 0.1 and 2. |
+| `margin` | `object` | No | — | Page margins, e.g. `{ "top": "1cm" }`. |
+| `media` | `string` | No | — | Render as `screen` or `print` media. |
+| `timeout` | `number` | No | `30000` | Maximum time in milliseconds. |
+
+The action returns the absolute path of the file it wrote, so a following action can pick it up.
+
+<Aside type="caution">
+PDF generation only works in headless mode. In a headful run (`SCRAPE_DOJO_DEBUG`), Chrome refuses the request.
+</Aside>
+
+## 💡 Examples
+
+### 🧾 Keep a receipt that has no download link
+
+```jsonc
+{
+  "name": "receiptPdf",
+  "action": "pdf",
+  "params": {
+    "filename": "{{previousData.receiptNumber}}-receipt",
+    "path": "./downloads"
+  }
+}
+```
+
+### 🖥️ Print what the screen shows, not the print stylesheet
+
+By default Chrome applies the site's `@media print` rules — which on many sites strip exactly the part you wanted. `media: "screen"` keeps the page as you see it:
+
+```jsonc
+{
+  "name": "receiptPdf",
+  "action": "pdf",
+  "params": {
+    "filename": "receipt",
+    "media": "screen",
+    "printBackground": true
+  }
+}
+```
+
+The media type is reset afterwards, so later actions see the page as before.
+
+### 📐 Narrow receipt on a smaller page
+
+```jsonc
+{
+  "name": "receiptPdf",
+  "action": "pdf",
+  "params": {
+    "filename": "receipt",
+    "format": "A5",
+    "margin": { "top": "5mm", "bottom": "5mm", "left": "5mm", "right": "5mm" }
+  }
+}
+```
+
+## 🔍 Good to know
+
+- **Wait before you print.** `pdf` captures the page as it is. If content arrives late, put a `waitForSelector` in front of it.
+- **The text stays text.** Unlike a screenshot, the result can be searched and indexed — which matters when a document management system picks the file up afterwards.
+- **Lazy-loaded images may be missing** if they never entered the viewport. Scroll first with `evaluate` when that happens.

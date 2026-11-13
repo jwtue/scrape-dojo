@@ -1,0 +1,83 @@
+---
+title: "pdf"
+description: "Die aktuelle Seite als PDF speichern"
+sidebar:
+  order: 49
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Nicht jedes Dokument, das du behalten willst, hängt an einem Download-Link. Viele Portale zeigen Rechnung oder Beleg als Webseite und bieten gar keine Datei an. Die `pdf`-Action druckt die aktuelle Seite in ein PDF, das damit wie jede heruntergeladene Datei auf der Platte landet — mit echter Textebene, nicht als Bild davon.
+
+## ⚙️ Parameter
+
+| Parameter | Typ | Pflicht | Default | Beschreibung |
+|-----------|-----|---------|---------|-------------|
+| `filename` | `string` | Ja | — | Zieldateiname; `.pdf` wird ergänzt, falls es fehlt. |
+| `path` | `string` | Nein | `./downloads` | Zielverzeichnis. Wie bei `download` wird die Scrape-ID als Unterordner eingefügt. |
+| `format` | `string` | Nein | `A4` | Seitenformat, z.B. `A4`, `Letter`. |
+| `landscape` | `boolean` | Nein | `false` | Quer- statt Hochformat. |
+| `printBackground` | `boolean` | Nein | `true` | Hintergrundfarben und -bilder mitdrucken. |
+| `scale` | `number` | Nein | — | Skalierung zwischen 0.1 und 2. |
+| `margin` | `object` | Nein | — | Seitenränder, z.B. `{ "top": "1cm" }`. |
+| `media` | `string` | Nein | — | Als `screen` oder `print` rendern. |
+| `timeout` | `number` | Nein | `30000` | Maximale Dauer in Millisekunden. |
+
+Die Action gibt den absoluten Pfad der geschriebenen Datei zurück, eine folgende Action kann damit weiterarbeiten.
+
+<Aside type="caution">
+PDF-Erzeugung funktioniert nur im Headless-Modus. In einem Lauf mit sichtbarem Browser (`SCRAPE_DOJO_DEBUG`) verweigert Chrome die Anfrage.
+</Aside>
+
+## 💡 Beispiele
+
+### 🧾 Einen Beleg sichern, der keinen Download-Link hat
+
+```jsonc
+{
+  "name": "belegPdf",
+  "action": "pdf",
+  "params": {
+    "filename": "{{previousData.belegnummer}}-beleg",
+    "path": "./downloads"
+  }
+}
+```
+
+### 🖥️ Drucken, was auf dem Bildschirm steht
+
+Standardmäßig wendet Chrome die `@media print`-Regeln der Seite an — und die entfernen auf vielen Seiten genau den Teil, den du wolltest. Mit `media: "screen"` bleibt die Seite so, wie du sie siehst:
+
+```jsonc
+{
+  "name": "belegPdf",
+  "action": "pdf",
+  "params": {
+    "filename": "beleg",
+    "media": "screen",
+    "printBackground": true
+  }
+}
+```
+
+Der Medientyp wird danach zurückgesetzt, folgende Actions sehen die Seite also unverändert.
+
+### 📐 Schmaler Beleg auf kleinerem Format
+
+```jsonc
+{
+  "name": "belegPdf",
+  "action": "pdf",
+  "params": {
+    "filename": "beleg",
+    "format": "A5",
+    "margin": { "top": "5mm", "bottom": "5mm", "left": "5mm", "right": "5mm" }
+  }
+}
+```
+
+## 🔍 Gut zu wissen
+
+- **Vorher warten.** `pdf` nimmt die Seite so auf, wie sie gerade ist. Kommen Inhalte verzögert, gehört ein `waitForSelector` davor.
+- **Text bleibt Text.** Anders als bei einem Screenshot ist das Ergebnis durchsuchbar und indizierbar — wichtig, wenn danach eine Dokumentenverwaltung die Datei übernimmt.
+- **Verzögert geladene Bilder fehlen womöglich**, wenn sie nie im sichtbaren Bereich waren. Dann vorher mit `evaluate` scrollen.
