@@ -19,6 +19,7 @@
         "loop",
         "navigate",
         "notify",
+        "pdf",
         "screenshot",
         "skipIf",
         "storeData",

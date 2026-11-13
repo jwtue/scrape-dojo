@@ -99,7 +99,8 @@ export type ActionName =
   | 'break'
   | 'waitForOtp'
   | 'notify'
-  | 'evaluate';
+  | 'evaluate'
+  | 'pdf';
 
 // API Response Types
 export interface ScrapeListItem {
