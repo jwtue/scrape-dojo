@@ -480,5 +480,76 @@ describe('PuppeteerService', () => {
       await service.newPage();
       expect(mockBrowser.on).not.toHaveBeenCalled();
     });
+
+    // Hängt den Blocker an einen Browser und gibt den Listener zurück.
+    const registerBlocker = async () => {
+      service.currentPage = null;
+      const mockBrowser = createMockBrowser([createMockPage()]);
+      (service as any).browser = mockBrowser;
+      await service.newPage();
+
+      const listener = mockBrowser.on.mock.calls.find(
+        (call: any[]) => call[0] === 'targetcreated',
+      )?.[1] as (target: any) => Promise<void>;
+      expect(listener).toBeDefined();
+
+      return { mockBrowser, listener };
+    };
+
+    it('should not close a page the service created itself', async () => {
+      const { mockBrowser, listener } = await registerBlocker();
+
+      // Das Event trifft ein, während browser.newPage() noch offen ist:
+      // currentPage zeigt dann noch auf die vorige Seite, der
+      // Identitätsvergleich im Blocker allein würde die neue Seite also
+      // schließen - und der Lauf hätte keine Seite mehr.
+      const created = createMockPage();
+      service.currentPage = null;
+      mockBrowser.pages = vi.fn().mockResolvedValue([]);
+      mockBrowser.newPage = vi.fn().mockImplementation(async () => {
+        await listener({
+          type: () => 'page',
+          page: async () => created,
+        });
+        return created;
+      });
+
+      const result = await service.newPage();
+
+      expect(result).toBe(created);
+      expect(created.close).not.toHaveBeenCalled();
+    });
+
+    it('should close a popup opened while no page is being created', async () => {
+      const { listener } = await registerBlocker();
+
+      const popup = createMockPage();
+      await listener({ type: () => 'page', page: async () => popup });
+
+      expect(popup.close).toHaveBeenCalled();
+    });
+
+    it('should ignore a target that is gone before page() resolves', async () => {
+      const { listener } = await registerBlocker();
+
+      // Unbehandelt würde diese Rejection den Prozess beenden.
+      await expect(
+        listener({
+          type: () => 'page',
+          page: async () => {
+            throw new Error('Protocol error: Target closed');
+          },
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('should ignore non-page targets', async () => {
+      const { listener } = await registerBlocker();
+
+      const page = vi.fn();
+      await listener({ type: () => 'browser', page });
+
+      expect(page).not.toHaveBeenCalled();
+    });
   });
 });

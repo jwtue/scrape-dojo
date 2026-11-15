@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { EventLogger } from './_logger/event-logger';
@@ -7,6 +7,32 @@ import * as fs from 'fs';
 import * as path from 'path';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+
+// Puppeteer-Rejections nach dem Schließen einer Seite dürfen den Server nicht
+// mitnehmen: der Stealth-Plugin schickt in seinem 'targetcreated'-Hook
+// CDP-Kommandos an jede neue Seite (Network.setUserAgentOverride und weitere).
+// Wird die Seite in diesem Moment geschlossen - vom Popup-Blocker oder vom
+// Portal selbst -, lehnt sein Promise mit TargetCloseError ab, und zwar in
+// einem async-Listener, den niemand abwartet. Seit Node 15 beendet eine
+// unbehandelte Rejection den Prozess; der laufende Scrape ist damit weg.
+// Genau dieser Fall wird hier geschluckt, alles andere fliegt weiter.
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const name = reason instanceof Error ? reason.name : '';
+  const pageClosed =
+    name === 'TargetCloseError' ||
+    name === 'ProtocolError' ||
+    /Target closed|Session closed|Target .*already closed/.test(message);
+
+  if (pageClosed) {
+    new Logger('Puppeteer').warn(
+      `⚠️ Ignored rejection from a closed page: ${message}`,
+    );
+    return;
+  }
+
+  throw reason;
+});
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {

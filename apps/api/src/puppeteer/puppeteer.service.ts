@@ -27,6 +27,8 @@ export class PuppeteerService implements OnModuleDestroy {
   // Abort-Flag für laufende Scrapes
   private _aborted = false;
   private popupBlockerRegistered = false;
+  // Steht auf true, solange wir selbst eine Seite anlegen - siehe createOwnPage().
+  private creatingOwnPage = false;
 
   constructor() {
     // Hier kannst du die gewünschten Argumente anpassen
@@ -277,6 +279,28 @@ export class PuppeteerService implements OnModuleDestroy {
     return null;
   }
 
+  /**
+   * Legt eine Seite an und markiert sie währenddessen als unsere eigene.
+   *
+   * Der Popup-Blocker hängt am Browser-Event 'targetcreated', und das feuert
+   * noch während dieses Promise offen ist. In diesem Moment zeigt
+   * this.currentPage noch auf die vorige (geschlossene) Seite - der
+   * Identitätsvergleich im Blocker hält die neue Seite deshalb für ein Popup
+   * und schließt genau die Seite, die der laufende Scrape gerade braucht.
+   * Danach stirbt auch der Prozess: der Stealth-Plugin hat zu diesem Zeitpunkt
+   * noch CDP-Kommandos auf der Seite offen (Network.setUserAgentOverride), und
+   * deren Promises lehnen mit TargetCloseError ab - unbehandelt, in einem
+   * async-Listener.
+   */
+  private async createOwnPage(browser: Browser): Promise<puppeteer.Page> {
+    this.creatingOwnPage = true;
+    try {
+      return await browser.newPage();
+    } finally {
+      this.creatingOwnPage = false;
+    }
+  }
+
   // Methode, um eine Seite zu erhalten - verwendet existierende oder erstellt neue
   public async newPage(): Promise<puppeteer.Page> {
     const browser = await this.getBrowser();
@@ -310,7 +334,7 @@ export class PuppeteerService implements OnModuleDestroy {
     } else {
       // Andernfalls erstelle neue Page
       this.logger.log('📃 Creating new page');
-      this.currentPage = await browser.newPage();
+      this.currentPage = await this.createOwnPage(browser);
     }
 
     // Prüfe ob Page noch gültig ist bevor wir sie konfigurieren
@@ -318,7 +342,7 @@ export class PuppeteerService implements OnModuleDestroy {
       this.logger.warn(
         '⚠️ Page was closed before configuration, creating new one',
       );
-      this.currentPage = await browser.newPage();
+      this.currentPage = await this.createOwnPage(browser);
     }
 
     try {
@@ -340,7 +364,7 @@ export class PuppeteerService implements OnModuleDestroy {
         this.logger.warn(
           '⚠️ Page closed during configuration, creating new page',
         );
-        this.currentPage = await browser.newPage();
+        this.currentPage = await this.createOwnPage(browser);
         await this.currentPage.setViewport({
           width: 1920,
           height: 1080,
@@ -358,12 +382,22 @@ export class PuppeteerService implements OnModuleDestroy {
     if (!this.popupBlockerRegistered) {
       this.logger.log('🛡️ Registering popup blocker');
       browser.on('targetcreated', async (target) => {
-        if (target.type() === 'page') {
-          const newPage = await target.page();
-          if (newPage && newPage !== this.currentPage) {
-            this.logger.log('🚫 Closing popup page');
-            await newPage.close().catch(() => {});
-          }
+        if (target.type() !== 'page') {
+          return;
+        }
+        // Seiten, die wir selbst anlegen, sind keine Popups. Das Flag wird
+        // synchron am Anfang des Listeners gelesen - vor dem ersten await -
+        // und deckt damit genau das Fenster ab, in dem das Event eintrifft.
+        if (this.creatingOwnPage) {
+          return;
+        }
+        // target.page() lehnt ab, wenn das Target schon wieder weg ist. Ohne
+        // catch wäre das eine unbehandelte Rejection in einem async-Listener,
+        // und die beendet seit Node 15 den Prozess.
+        const popup = await target.page().catch(() => null);
+        if (popup && popup !== this.currentPage) {
+          this.logger.log('🚫 Closing popup page');
+          await popup.close().catch(() => {});
         }
       });
       this.popupBlockerRegistered = true;
