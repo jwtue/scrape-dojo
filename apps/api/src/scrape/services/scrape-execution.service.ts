@@ -84,8 +84,16 @@ export class ScrapeExecutionService {
         variables,
       );
 
-      // Build and save debug data
-      const debugData = this.buildDebugData(previousData);
+      // Build and save debug data.
+      //
+      // Durch redactObject(), weil previousData die aufgeloesten Variablen
+      // haelt — also auch die Secrets (Portal-Passwort, TOTP-Seed). Ohne
+      // Redaction landen die im Klartext in scrape_data und von dort ueber den
+      // Debug-Endpunkt in der Oberflaeche; der verschluesselte Secret-Speicher
+      // ist damit umgangen. Derselbe Service redigiert die Log-Ausgabe laengst.
+      const debugData = this.secretRedaction.redactObject(
+        this.buildDebugData(previousData),
+      );
       await this.databaseService.storeData(
         scrape.id,
         '__debugData',

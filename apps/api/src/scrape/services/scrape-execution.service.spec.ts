@@ -23,6 +23,7 @@ describe('ScrapeExecutionService', () => {
   let mockActionHandlerService: any;
   let mockScrapeEventsService: any;
   let mockDatabaseService: any;
+  let mockSecretRedaction: any;
   let mockEventBus: any;
 
   const createScrape = (overrides: any = {}) => ({
@@ -76,7 +77,7 @@ describe('ScrapeExecutionService', () => {
       publish: vi.fn().mockResolvedValue(undefined),
     };
 
-    const mockSecretRedaction = {
+    mockSecretRedaction = {
       registerSecret: vi.fn(),
       redact: vi.fn((msg: string) => msg),
       redactObject: vi.fn((obj: any) => obj),
@@ -135,6 +136,25 @@ describe('ScrapeExecutionService', () => {
 
       expect(result).toEqual({ success: true });
       expect(previousData.get('navigate-action')).toBe(vonJsonata);
+    });
+
+    // previousData haelt die aufgeloesten Variablen, Secrets eingeschlossen.
+    // Der Dump darf sie nicht im Klartext in die DB schreiben.
+    it('should run the debug data through the secret redaction', async () => {
+      mockSecretRedaction.redactObject = vi.fn(() => ({ redigiert: true }));
+      const previousData = new Map<string, any>([['var_password', 'geheim']]);
+
+      await service.executeScrape(createScrape(), 'run-1', previousData, {});
+
+      expect(mockSecretRedaction.redactObject).toHaveBeenCalledWith(
+        expect.objectContaining({ var_password: 'geheim' }),
+      );
+      const dump = mockDatabaseService.storeData.mock.calls.find(
+        (c: any[]) => c[1] === '__debugData',
+      );
+      expect(dump).toBeDefined();
+      expect(dump[2]).toBe('{"redigiert":true}');
+      expect(dump[2]).not.toContain('geheim');
     });
 
     it('should reset abort state at the start', async () => {
