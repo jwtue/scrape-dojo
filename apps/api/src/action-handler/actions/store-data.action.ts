@@ -1,5 +1,6 @@
 import { BaseAction } from './bases/base.action';
 import { Action } from '../_decorators/action.decorator';
+import { describeValue } from '../../_utils/describe-value';
 
 export type StoreDataParams = {
   key: string;
@@ -31,7 +32,7 @@ export class StoreDataAction extends BaseAction<StoreDataParams> {
     // Speichere die neuen Werte im Runtime-Speicher (für Template-Zugriff in diesem Run)
     this.storedData[key] = value;
 
-    this.logger.log(`💾 Stored: ${key} = ${value}`);
+    this.logger.log(`💾 Stored: ${key} = ${describeValue(value)}`);
 
     // Persistiere in DB wenn gewünscht
     const databaseService = this.data?.databaseService;

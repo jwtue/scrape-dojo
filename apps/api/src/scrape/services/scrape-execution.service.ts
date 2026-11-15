@@ -18,6 +18,7 @@ import {
 import { ScrapeLogger } from '../../_logger/scrape-logger.service';
 import { SecretRedactionService } from '../../_logger/secret-redaction.service';
 import { BreakLoopError } from '../../action-handler/errors/break-loop.error';
+import { describeValue } from '../../_utils/describe-value';
 
 @Injectable()
 export class ScrapeExecutionService {
@@ -256,7 +257,7 @@ export class ScrapeExecutionService {
         );
 
         if (result !== undefined && result !== null) {
-          this.logger.debug(`Action "${action.name}" returned: ${result}`);
+          this.logger.debug(`Action "${action.name}" returned: ${describeValue(result)}`);
           previousData.set(action.name, result);
         }
 

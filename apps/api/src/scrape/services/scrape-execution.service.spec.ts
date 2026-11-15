@@ -117,6 +117,26 @@ describe('ScrapeExecutionService', () => {
       expect(result).toEqual({ success: true });
     });
 
+    // jsonata liefert Objekt-Ergebnisse mit Object.create(null) zurueck. Die
+    // Debug-Zeile fuer das Ergebnis hat die interpoliert und dabei geworfen -
+    // eine einzige transform-Aktion mit Objekt-Ergebnis beendete so den Lauf.
+    it('should not fail a run over a result object without a prototype', async () => {
+      const vonJsonata: any = Object.create(null);
+      vonJsonata.totalPages = 3;
+      mockActionHandlerService.handleAction.mockResolvedValue(vonJsonata);
+
+      const previousData = new Map<string, any>();
+      const result = await service.executeScrape(
+        createScrape(),
+        'run-1',
+        previousData,
+        {},
+      );
+
+      expect(result).toEqual({ success: true });
+      expect(previousData.get('navigate-action')).toBe(vonJsonata);
+    });
+
     it('should reset abort state at the start', async () => {
       const scrape = createScrape();
 
