@@ -114,6 +114,7 @@ export class ScrapeEventsService implements OnModuleInit, OnModuleDestroy {
       resolve: (code: string) => void;
       page: Page;
       alternatives?: OtpAlternative[];
+      timer?: NodeJS.Timeout;
     }
   >();
   private fileWatchers: FSWatcher[] = [];
@@ -522,14 +523,46 @@ export class ScrapeEventsService implements OnModuleInit, OnModuleDestroy {
     runId?: string,
     page?: Page,
     alternatives?: OtpAlternative[],
+    timeoutMs?: number,
   ): Promise<string> {
     const requestId = `otp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
     this.logger.log(`🔐 OTP angefordert: ${requestId}`);
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      // Begrenzt die Wartezeit. Ohne sie wartet ein unbeaufsichtigter Lauf
+      // endlos: der geplante Lauf haengt, bis jemand den Code eintippt oder
+      // den Lauf abbricht. Der Timer lebt hier und nicht in der Aktion, weil
+      // nur hier die requestId und damit der wartende Eintrag bekannt ist.
+      // 0 oder kein Wert heisst bewusst: ohne Grenze warten.
+      const timer =
+        timeoutMs && timeoutMs > 0
+          ? setTimeout(() => {
+              this.pendingOtpRequests.delete(requestId);
+              this.logger.warn(
+                `\u23f1\ufe0f OTP-Eingabe nicht innerhalb von ${timeoutMs} ms erfolgt: ${requestId}`,
+              );
+              this.emit({
+                type: 'otp-timeout',
+                scrapeId,
+                runId,
+                message: `Keine OTP-Eingabe innerhalb von ${timeoutMs} ms`,
+              });
+              reject(
+                new Error(
+                  `Keine OTP-Eingabe innerhalb von ${timeoutMs} ms (Request ${requestId})`,
+                ),
+              );
+            }, timeoutMs)
+          : undefined;
+
       // Speichere den Resolver + Page-Referenz
-      this.pendingOtpRequests.set(requestId, { resolve, page, alternatives });
+      this.pendingOtpRequests.set(requestId, {
+        resolve,
+        page,
+        alternatives,
+        timer,
+      });
 
       // Emit das Event
       this.emit({
@@ -554,6 +587,9 @@ export class ScrapeEventsService implements OnModuleInit, OnModuleDestroy {
 
     const pending = this.pendingOtpRequests.get(requestId);
     if (pending) {
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
       pending.resolve(code);
       this.pendingOtpRequests.delete(requestId);
 

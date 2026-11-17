@@ -173,6 +173,7 @@ describe('WaitForOtpAction', () => {
         expect.arrayContaining([
           expect.objectContaining({ id: 'whatsapp', label: 'WhatsApp' }),
         ]),
+        120000,
       );
     });
 
@@ -295,6 +296,7 @@ describe('WaitForOtpAction', () => {
         'r1',
         expect.anything(),
         [], // No alternatives since the selector threw
+        120000,
       );
     });
 
@@ -323,6 +325,7 @@ describe('WaitForOtpAction', () => {
         'r1',
         expect.anything(),
         [],
+        120000,
       );
     });
 
@@ -350,6 +353,7 @@ describe('WaitForOtpAction', () => {
         'r1',
         expect.anything(),
         [],
+        120000,
       );
     });
 
@@ -377,6 +381,7 @@ describe('WaitForOtpAction', () => {
         'r1',
         expect.anything(),
         [],
+        120000,
       );
     });
 

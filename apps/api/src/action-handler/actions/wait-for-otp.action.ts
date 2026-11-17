@@ -42,7 +42,6 @@ export class WaitForOtpAction extends BaseAction<WaitForOtpActionParams> {
     const {
       selector,
       detectSelector,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       timeout = 120000,
       pressEnter = true,
       message = 'Bitte gib den OTP-Code ein:',
@@ -155,6 +154,9 @@ export class WaitForOtpAction extends BaseAction<WaitForOtpActionParams> {
     if (this.data?.scrapeEventsService) {
       // Über Web-UI
       this.logger.log('🌐 Warte auf OTP-Eingabe über Web-UI...');
+      // timeout wird hier durchgegeben; upstream wurde der Parameter gelesen
+      // und nie benutzt (der eslint-disable darueber sagte es offen). Ohne
+      // Grenze haengt ein geplanter Lauf unbegrenzt an dieser Stelle.
       otpCode = await this.data.scrapeEventsService.requestOtp(
         this.data.scrapeId || 'unknown',
         message,
@@ -162,6 +164,7 @@ export class WaitForOtpAction extends BaseAction<WaitForOtpActionParams> {
         this.data.runId,
         this.page,
         alternatives,
+        timeout,
       );
     } else {
       // Fallback: Terminal-Eingabe

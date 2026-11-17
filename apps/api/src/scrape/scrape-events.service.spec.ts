@@ -498,7 +498,84 @@ describe('ScrapeEventsService', () => {
       sub.unsubscribe();
     });
 
+    // Ohne Zeitgrenze wartet ein geplanter Lauf endlos auf die Eingabe.
+    // Der Timer lebt im Service, weil nur dort die requestId bekannt ist.
+    it('should reject when no OTP arrives within the timeout', async () => {
+      vi.useFakeTimers();
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+
+      const otpPromise = service.requestOtp(
+        'scrape-1',
+        'Enter OTP',
+        '#otp-input',
+        'run-1',
+        undefined,
+        undefined,
+        5000,
+      );
+      const erwartung = expect(otpPromise).rejects.toThrow(
+        /Keine OTP-Eingabe innerhalb von 5000 ms/,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await erwartung;
+
+      expect(received.some((e) => e.type === 'otp-timeout')).toBe(true);
+      sub.unsubscribe();
+      vi.useRealTimers();
+    });
+
+    it('should not reject after a code arrived in time', async () => {
+      vi.useFakeTimers();
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+
+      const otpPromise = service.requestOtp(
+        'scrape-1',
+        'Enter OTP',
+        '#otp-input',
+        'run-1',
+        undefined,
+        undefined,
+        5000,
+      );
+      const requestId = JSON.parse(received[0].message!).requestId;
+
+      service.submitOtp(requestId, '424242');
+      await expect(otpPromise).resolves.toBe('424242');
+
+      // Der abgeraeumte Timer darf nicht nachtraeglich noch ablehnen.
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(received.some((e) => e.type === 'otp-timeout')).toBe(false);
+      sub.unsubscribe();
+      vi.useRealTimers();
+    });
+
+    it('should wait without limit when no timeout is given', async () => {
+      vi.useFakeTimers();
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+
+      const otpPromise = service.requestOtp(
+        'scrape-1',
+        'Enter OTP',
+        '#otp-input',
+        'run-1',
+      );
+
+      await vi.advanceTimersByTimeAsync(600000);
+      expect(received.some((e) => e.type === 'otp-timeout')).toBe(false);
+
+      const requestId = JSON.parse(received[0].message!).requestId;
+      service.submitOtp(requestId, '111111');
+      await expect(otpPromise).resolves.toBe('111111');
+      sub.unsubscribe();
+      vi.useRealTimers();
+    });
+
     it('submitOtp should warn for unknown requestId', () => {
+
       // Should not throw
       service.submitOtp('unknown-id', '000000');
     });
