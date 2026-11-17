@@ -29,6 +29,7 @@ export interface ScrapeEvent {
     | 'action-status'
     | 'otp-required'
     | 'otp-received'
+    | 'otp-timeout'
     | 'scrape-start'
     | 'scrape-end'
     | 'loop-iteration'

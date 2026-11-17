@@ -138,6 +138,7 @@ export type ScrapeEventType =
   | 'log'
   | 'otp-required'
   | 'otp-received'
+  | 'otp-timeout'
   | 'notification'
   | 'config-reload';
 

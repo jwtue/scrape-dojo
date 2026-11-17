@@ -505,6 +505,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // Lief die Wartezeit ab, nimmt der Server den Request zurueck. Ohne das
+    // hier bliebe die Eingabemaske stehen und suggerierte, es waere noch
+    // etwas einzugeben.
+    if (event.type === 'otp-timeout' && isCurrentScrape) {
+      this.otpRequest.set(null);
+      this.otpCode.set('');
+      return;
+    }
+
     // Browser-Notifications
     if (event.type === 'notification' && (event as any).notification) {
       const notif = (event as any).notification;
