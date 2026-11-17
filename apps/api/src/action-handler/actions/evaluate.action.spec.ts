@@ -209,7 +209,82 @@ describe('EvaluateAction', () => {
       );
     });
 
+    // Navigiert die Seite waehrend der Auswertung, sagt der Fehler nichts
+    // ueber den Ausdruck. Genau das ist im Amazon-Login zweimal passiert.
+    it('should retry once when the page navigated during evaluation', async () => {
+      const navigationsfehler = new Error(
+        'Execution context was destroyed, most likely because of a navigation.',
+      );
+      mockPage.evaluate = vi
+        .fn()
+        .mockRejectedValueOnce(navigationsfehler)
+        .mockResolvedValueOnce('nach der Navigation');
+      mockPage.waitForNavigation = vi.fn().mockResolvedValue(undefined);
+      action.params = { expression: 'pruefen()' };
+
+      const result = await action.run();
+
+      expect(result).toBe('nach der Navigation');
+      expect(mockPage.evaluate).toHaveBeenCalledTimes(2);
+      expect((action as any).logger.warn).toHaveBeenCalledWith(
+        '⚠️ Seite ist während der Auswertung navigiert — zweiter Versuch',
+      );
+    });
+
+    it('should give up after the second attempt also fails', async () => {
+      const navigationsfehler = new Error('Execution context was destroyed');
+      mockPage.evaluate = vi.fn().mockRejectedValue(navigationsfehler);
+      mockPage.waitForNavigation = vi.fn().mockResolvedValue(undefined);
+      action.params = { expression: 'pruefen()' };
+
+      await expect(action.run()).rejects.toThrow(
+        'Execution context was destroyed',
+      );
+      expect(mockPage.evaluate).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not retry other errors', async () => {
+      mockPage.evaluate = vi
+        .fn()
+        .mockRejectedValue(new Error('ReferenceError: foo is not defined'));
+      action.params = { expression: 'foo()' };
+
+      await expect(action.run()).rejects.toThrow('ReferenceError');
+      expect(mockPage.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not retry when retryOnNavigation is false', async () => {
+      mockPage.evaluate = vi
+        .fn()
+        .mockRejectedValue(new Error('Execution context was destroyed'));
+      action.params = { expression: 'pruefen()', retryOnNavigation: false };
+
+      await expect(action.run()).rejects.toThrow(
+        'Execution context was destroyed',
+      );
+      expect(mockPage.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it('should waits for the pending navigation before retrying', async () => {
+      mockPage.evaluate = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Execution context was destroyed'))
+        .mockResolvedValueOnce('ok');
+      mockPage.waitForNavigation = vi.fn().mockRejectedValue(new Error('timeout'));
+      action.params = { expression: 'pruefen()' };
+
+      // Bleibt die Navigation aus, darf das den zweiten Versuch nicht verhindern.
+      const result = await action.run();
+
+      expect(result).toBe('ok');
+      expect(mockPage.waitForNavigation).toHaveBeenCalledWith({
+        waitUntil: 'domcontentloaded',
+        timeout: 10000,
+      });
+    });
+
     it('should return null and warn when an optional evaluation fails', async () => {
+
       mockPage.evaluate = vi.fn().mockRejectedValue(new Error('boom'));
       action.params = { expression: 'foo()', optional: true };
 
