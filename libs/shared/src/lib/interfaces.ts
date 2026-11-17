@@ -98,6 +98,7 @@ export type ActionName =
   | 'getAll'
   | 'break'
   | 'waitForOtp'
+  | 'interactiveLogin'
   | 'notify'
   | 'evaluate'
   | 'pdf';
@@ -139,6 +140,9 @@ export type ScrapeEventType =
   | 'otp-required'
   | 'otp-received'
   | 'otp-timeout'
+  | 'login-required'
+  | 'login-done'
+  | 'login-timeout'
   | 'notification'
   | 'config-reload';
 
@@ -243,6 +247,54 @@ export interface OtpRequest {
   selector: string;
   alternatives?: OtpAlternative[];
 }
+
+// Interactive login: the run pauses and hands the live page to the user.
+//
+// Why this exists: some portals guard their sign-in with a bot check
+// (Cloudflare Turnstile, reCAPTCHA) or a passkey prompt. Those cannot be
+// scripted, and they should not be: the point is that a human signs in. The
+// run therefore shows the page it is already on, lets the user work in it, and
+// continues with the session that sign-in produced.
+export interface LoginRequest {
+  requestId: string;
+  message: string;
+  /** URL of the page at the moment the run paused. */
+  url: string;
+  /** Size of the streamed viewport, so the UI can scale pointer coordinates. */
+  viewport: { width: number; height: number };
+  /** When the request expires (epoch ms), or undefined when it waits forever. */
+  expiresAt?: number;
+}
+
+/** One screencast frame of the paused page. */
+export interface LoginFrame {
+  requestId: string;
+  /** JPEG, base64-encoded, for use in an <img> src as a data URL. */
+  data: string;
+  width: number;
+  height: number;
+}
+
+/** A pointer or keyboard event the UI forwards into the paused page. */
+export type LoginInput =
+  | {
+      kind: 'mouse';
+      type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
+      x: number;
+      y: number;
+      button?: 'none' | 'left' | 'middle' | 'right';
+      clickCount?: number;
+      deltaX?: number;
+      deltaY?: number;
+    }
+  | {
+      kind: 'key';
+      type: 'keyDown' | 'keyUp' | 'char';
+      key?: string;
+      code?: string;
+      text?: string;
+    }
+  | { kind: 'text'; text: string };
 
 // Notification Request
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';

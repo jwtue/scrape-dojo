@@ -15,7 +15,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ScrapeService } from './scrape.service';
-import { ScrapeEventsService } from './scrape-events.service';
+import { ScrapeEventsService, LoginInput } from './scrape-events.service';
 import { SseTicketService } from './sse-ticket.service';
 import { SchedulerService } from './scheduler.service';
 import { DatabaseService } from '../database/database.service';
@@ -333,6 +333,90 @@ export class ScrapeUIController {
         message: error.message,
       });
     }
+  }
+
+  // ============ Interactive Login Endpoints ============
+
+  /**
+   * Bildfolge der angehaltenen Seite. Eigener Stream, nicht der
+   * Workflow-Event-Stream: ein Screencast schickt mehrere Bilder je Sekunde
+   * und haette den Event-Puffer binnen Sekunden geleert.
+   */
+  // Wie /events @Public(), weil EventSource keinen Authorization-Header
+  // schicken kann; geprueft wird mit einem Einmal-Ticket aus
+  // POST /api/events/ticket.
+  @Public()
+  @Sse('login-stream/:requestId')
+  loginStream(
+    @Param('requestId') requestId: string,
+    @Query('ticket') ticket?: string,
+  ): Observable<MessageEvent> {
+    if (!ticket) {
+      throw new UnauthorizedException(
+        'SSE ticket required. Obtain one via POST /api/events/ticket',
+      );
+    }
+    if (!this.sseTicketService.validateTicket(ticket)) {
+      throw new UnauthorizedException('Invalid or expired SSE ticket');
+    }
+
+    return this.scrapeEventsService
+      .getLoginFrames(requestId)
+      .pipe(map((bild) => ({ data: JSON.stringify(bild) }) as MessageEvent));
+  }
+
+  /**
+   * Maus- oder Tastatureingabe in die angehaltene Seite geben.
+   */
+  @Post('login-input/:requestId')
+  async loginInput(
+    @Param('requestId') requestId: string,
+    @Body() body: LoginInput,
+    @Res() res: Response,
+  ) {
+    try {
+      const zugestellt = await this.scrapeEventsService.forwardLoginInput(
+        requestId,
+        body,
+      );
+      res
+        .status(zugestellt ? HttpStatus.OK : HttpStatus.BAD_REQUEST)
+        .json({ success: zugestellt });
+    } catch (error) {
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        error: 'Login input failed',
+        message: error.message,
+      });
+    }
+  }
+
+  /**
+   * Anmeldung ist durch — der Lauf geht weiter.
+   */
+  @Post('login-done/:requestId')
+  loginDone(
+    @Param('requestId') requestId: string,
+    @Res() res: Response,
+  ) {
+    const erfolg = this.scrapeEventsService.completeLogin(requestId);
+    res
+      .status(erfolg ? HttpStatus.OK : HttpStatus.BAD_REQUEST)
+      .json({ success: erfolg });
+  }
+
+  /**
+   * Anmeldung abbrechen. Der Lauf scheitert dann mit Begruendung, statt stumm
+   * ohne Sitzung weiterzulaufen.
+   */
+  @Post('login-cancel/:requestId')
+  loginCancel(
+    @Param('requestId') requestId: string,
+    @Res() res: Response,
+  ) {
+    const erfolg = this.scrapeEventsService.cancelLogin(requestId);
+    res
+      .status(erfolg ? HttpStatus.OK : HttpStatus.BAD_REQUEST)
+      .json({ success: erfolg });
   }
 
   // ============ Run History Endpoints ============

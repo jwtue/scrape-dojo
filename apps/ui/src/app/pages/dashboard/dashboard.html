@@ -140,6 +140,12 @@
     (close)="closeOtpModal()"
   />
 
+  <!-- Interaktive Anmeldung: Live-Ansicht der angehaltenen Seite -->
+  <app-login-modal
+    [loginRequest]="loginRequest()"
+    (close)="loginRequest.set(null)"
+  />
+
   <!-- Notification Modal (Toast-like, always present) -->
   <app-notification-modal />
 

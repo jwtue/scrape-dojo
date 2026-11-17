@@ -444,6 +444,14 @@
     "enter_code": "Enter code...",
     "or_alternative": "Or:"
   },
+  "login": {
+    "title": "Sign-in required",
+    "remaining": "Remaining",
+    "waiting_for_stream": "Waiting for the page view...",
+    "hint": "Sign in here as you would in a normal browser. The run continues as soon as the sign-in is detected — or when you click \"Sign-in done\".",
+    "done": "Sign-in done",
+    "cancel": "Cancel"
+  },
   "api_docs_modal": {
     "title": "API Documentation"
   },

@@ -451,6 +451,14 @@
     "enter_code": "Code eingeben...",
     "or_alternative": "Oder:"
   },
+  "login": {
+    "title": "Anmeldung erforderlich",
+    "remaining": "Verbleibend",
+    "waiting_for_stream": "Warte auf das Bild der Seite...",
+    "hint": "Melde dich in der Ansicht an wie in einem normalen Browser. Der Lauf geht weiter, sobald die Anmeldung erkannt wird — oder wenn du auf \"Anmeldung fertig\" klickst.",
+    "done": "Anmeldung fertig",
+    "cancel": "Abbrechen"
+  },
   "api_docs_modal": {
     "title": "API-Dokumentation"
   },

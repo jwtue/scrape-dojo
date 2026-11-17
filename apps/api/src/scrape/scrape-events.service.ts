@@ -10,7 +10,7 @@ import { Subject, Observable } from 'rxjs';
 import { watch, FSWatcher } from 'node:fs';
 import { join } from 'path';
 import { existsSync, statSync } from 'fs';
-import type { Page } from 'puppeteer';
+import type { CDPSession, Page } from 'puppeteer';
 import { SecretRedactionService } from '../_logger/secret-redaction.service';
 
 export type LogLevel = 'log' | 'error' | 'warn' | 'debug' | 'verbose';
@@ -30,6 +30,9 @@ export interface ScrapeEvent {
     | 'otp-required'
     | 'otp-received'
     | 'otp-timeout'
+    | 'login-required'
+    | 'login-done'
+    | 'login-timeout'
     | 'scrape-start'
     | 'scrape-end'
     | 'loop-iteration'
@@ -87,6 +90,42 @@ export interface OtpRequest {
   alternatives?: OtpAlternative[];
 }
 
+export interface LoginRequest {
+  scrapeId: string;
+  requestId: string;
+  message: string;
+  url: string;
+  viewport: { width: number; height: number };
+  expiresAt?: number;
+}
+
+export interface LoginFrame {
+  requestId: string;
+  data: string;
+  width: number;
+  height: number;
+}
+
+export type LoginInput =
+  | {
+      kind: 'mouse';
+      type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel';
+      x: number;
+      y: number;
+      button?: 'none' | 'left' | 'middle' | 'right';
+      clickCount?: number;
+      deltaX?: number;
+      deltaY?: number;
+    }
+  | {
+      kind: 'key';
+      type: 'keyDown' | 'keyUp' | 'char';
+      key?: string;
+      code?: string;
+      text?: string;
+    }
+  | { kind: 'text'; text: string };
+
 export interface NotificationData {
   notificationId: string;
   type: 'info' | 'success' | 'warning' | 'error';
@@ -118,6 +157,25 @@ export class ScrapeEventsService implements OnModuleInit, OnModuleDestroy {
       timer?: NodeJS.Timeout;
     }
   >();
+  private pendingLoginRequests = new Map<
+    string,
+    {
+      resolve: (ergebnis: string) => void;
+      reject: (fehler: Error) => void;
+      page: Page;
+      cdp?: CDPSession;
+      timer?: NodeJS.Timeout;
+      scrapeId: string;
+      runId?: string;
+    }
+  >();
+
+  // Bildfolgen laufen über einen EIGENEN Kanal, nicht über eventSubject:
+  // emit() legt jedes Nicht-Log-Event im Workflow-Puffer ab (1000 Einträge),
+  // und ein Screencast mit mehreren Bildern je Sekunde würde ihn binnen
+  // Sekunden leeren. Ausserdem haben Bilder in der Redaction nichts zu suchen.
+  private loginFrameSubject = new Subject<LoginFrame>();
+
   private fileWatchers: FSWatcher[] = [];
   private reloadDebounce: NodeJS.Timeout | null = null;
 
@@ -629,6 +687,281 @@ export class ScrapeEventsService implements OnModuleInit, OnModuleDestroy {
         `❌ Fehler beim Klicken der OTP-Alternative: ${error.message}`,
       );
       return false;
+    }
+  }
+
+  /**
+   * Interaktive Anmeldung anfordern: der Lauf haelt an, die UI bekommt die
+   * laufende Seite als Bildfolge und gibt Maus- und Tastatureingaben zurueck.
+   *
+   * Warum nicht einfach skripten: Portale wie IKEA sichern ihre Anmeldung mit
+   * einer Bot-Pruefung (Cloudflare Turnstile) oder verlangen einen Passkey.
+   * Beides laesst sich nicht nachbauen, und es soll sich auch nicht nachbauen
+   * lassen — der Sinn ist, dass ein Mensch sich anmeldet. Der Lauf zeigt daher
+   * die Seite, auf der er schon steht, und macht mit der Sitzung weiter, die
+   * dabei entsteht.
+   *
+   * @param fertigWenn Optionaler Test, der zyklisch geprueft wird. Trifft er
+   *        zu, endet die Wartezeit von selbst — der Nutzer muss nichts
+   *        bestaetigen. Damit laeuft eine erfolgreiche Anmeldung durch, ohne
+   *        dass jemand auf "fertig" klickt.
+   */
+  async requestLogin(
+    scrapeId: string,
+    message: string,
+    page: Page,
+    runId?: string,
+    timeoutMs?: number,
+    fertigWenn?: () => Promise<boolean>,
+  ): Promise<string> {
+    const requestId = `login-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
+    const viewport = page.viewport() ?? { width: 1280, height: 800 };
+    const url = page.url();
+
+    this.logger.log(`🧑‍💻 Interaktive Anmeldung angefordert: ${requestId}`);
+
+    return new Promise<string>((resolve, reject) => {
+      // Wie beim OTP: ohne Grenze wartet ein unbeaufsichtigter Lauf endlos.
+      // 0 oder kein Wert heisst bewusst "ohne Grenze".
+      const timer =
+        timeoutMs && timeoutMs > 0
+          ? setTimeout(() => {
+              this.logger.warn(
+                `⏱️ Keine Anmeldung innerhalb von ${timeoutMs} ms: ${requestId}`,
+              );
+              void this.beendeLogin(requestId);
+              this.emit({
+                type: 'login-timeout',
+                scrapeId,
+                runId,
+                message: `Keine Anmeldung innerhalb von ${timeoutMs} ms`,
+              });
+              reject(
+                new Error(
+                  `Keine Anmeldung innerhalb von ${timeoutMs} ms (Request ${requestId})`,
+                ),
+              );
+            }, timeoutMs)
+          : undefined;
+
+      this.pendingLoginRequests.set(requestId, {
+        resolve,
+        reject,
+        page,
+        timer,
+        scrapeId,
+        runId,
+      });
+
+      // Selbsterkennung: trifft der Test zu, ist die Anmeldung durch.
+      if (fertigWenn) {
+        const prueferId = setInterval(async () => {
+          if (!this.pendingLoginRequests.has(requestId)) {
+            clearInterval(prueferId);
+            return;
+          }
+          let durch = false;
+          try {
+            durch = await fertigWenn();
+          } catch {
+            // Waehrend einer Navigation schlaegt der Test fehl; das ist kein
+            // Grund aufzugeben, beim naechsten Durchgang steht die Seite.
+            durch = false;
+          }
+          if (durch) {
+            clearInterval(prueferId);
+            this.logger.log(`✅ Anmeldung selbst erkannt: ${requestId}`);
+            this.completeLogin(requestId, 'erkannt');
+          }
+        }, 2000);
+      }
+
+      // Bildfolge starten und die UI benachrichtigen. Schlaegt der Screencast
+      // fehl, wird NICHT abgebrochen: ohne Bild ist die Anmeldung muehsam,
+      // aber der Lauf wartet weiter und die Selbsterkennung greift trotzdem.
+      void this.starteBildfolge(requestId, page);
+
+      this.emit({
+        type: 'login-required',
+        scrapeId,
+        runId,
+        message: JSON.stringify({
+          scrapeId,
+          requestId,
+          message,
+          url,
+          viewport: { width: viewport.width, height: viewport.height },
+          expiresAt:
+            timeoutMs && timeoutMs > 0 ? Date.now() + timeoutMs : undefined,
+        } as LoginRequest),
+      });
+    });
+  }
+
+  /**
+   * Bildfolge der angehaltenen Seite per CDP-Screencast.
+   */
+  private async starteBildfolge(requestId: string, page: Page): Promise<void> {
+    const wartend = this.pendingLoginRequests.get(requestId);
+    if (!wartend) return;
+
+    try {
+      const cdp = await page.createCDPSession();
+      wartend.cdp = cdp;
+
+      cdp.on('Page.screencastFrame', (frame: any) => {
+        this.loginFrameSubject.next({
+          requestId,
+          data: frame.data,
+          width: frame.metadata?.deviceWidth ?? 0,
+          height: frame.metadata?.deviceHeight ?? 0,
+        });
+        // Ohne Bestaetigung schickt Chrome kein weiteres Bild.
+        void cdp
+          .send('Page.screencastFrameAck', { sessionId: frame.sessionId })
+          .catch(() => undefined);
+      });
+
+      await cdp.send('Page.startScreencast', {
+        format: 'jpeg',
+        quality: 60,
+        maxWidth: 1280,
+        maxHeight: 900,
+        everyNthFrame: 1,
+      });
+      this.logger.debug(`🎥 Screencast laeuft: ${requestId}`);
+    } catch (fehler) {
+      this.logger.warn(
+        `⚠️ Screencast nicht gestartet (${requestId}): ${(fehler as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Eine Eingabe aus der UI in die angehaltene Seite geben.
+   */
+  async forwardLoginInput(
+    requestId: string,
+    eingabe: LoginInput,
+  ): Promise<boolean> {
+    const wartend = this.pendingLoginRequests.get(requestId);
+    if (!wartend) {
+      this.logger.warn(`⚠️ Keine wartende Anmeldung fuer: ${requestId}`);
+      return false;
+    }
+
+    try {
+      const cdp = wartend.cdp;
+      if (!cdp) return false;
+
+      if (eingabe.kind === 'mouse') {
+        await cdp.send('Input.dispatchMouseEvent', {
+          type: eingabe.type,
+          x: Math.round(eingabe.x),
+          y: Math.round(eingabe.y),
+          button: eingabe.button ?? 'left',
+          clickCount: eingabe.clickCount ?? 1,
+          deltaX: eingabe.deltaX ?? 0,
+          deltaY: eingabe.deltaY ?? 0,
+          modifiers: 0,
+        });
+      } else if (eingabe.kind === 'key') {
+        await cdp.send('Input.dispatchKeyEvent', {
+          type: eingabe.type,
+          key: eingabe.key,
+          code: eingabe.code,
+          text: eingabe.text,
+        });
+      } else {
+        await cdp.send('Input.insertText', { text: eingabe.text });
+      }
+      return true;
+    } catch (fehler) {
+      this.logger.warn(
+        `⚠️ Eingabe nicht zugestellt (${requestId}): ${(fehler as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Bildfolge einer wartenden Anmeldung.
+   */
+  getLoginFrames(requestId: string): Observable<LoginFrame> {
+    return new Observable<LoginFrame>((subscriber) => {
+      const sub = this.loginFrameSubject.asObservable().subscribe((bild) => {
+        if (bild.requestId === requestId) subscriber.next(bild);
+      });
+      return () => sub.unsubscribe();
+    });
+  }
+
+  /**
+   * Die Anmeldung ist durch — der Lauf geht weiter.
+   */
+  completeLogin(requestId: string, ergebnis = 'angemeldet'): boolean {
+    const wartend = this.pendingLoginRequests.get(requestId);
+    if (!wartend) {
+      this.logger.warn(`⚠️ Keine wartende Anmeldung fuer: ${requestId}`);
+      return false;
+    }
+
+    const { scrapeId, runId, resolve } = wartend;
+    void this.beendeLogin(requestId);
+    resolve(ergebnis);
+
+    this.emit({
+      type: 'login-done',
+      scrapeId,
+      runId,
+      message: `Anmeldung abgeschlossen (${ergebnis})`,
+    });
+    return true;
+  }
+
+  /**
+   * Abbruch durch den Nutzer. Der Lauf scheitert dann mit Begruendung, statt
+   * stumm ohne Sitzung weiterzulaufen.
+   */
+  cancelLogin(requestId: string, grund = 'vom Nutzer abgebrochen'): boolean {
+    const wartend = this.pendingLoginRequests.get(requestId);
+    if (!wartend) return false;
+
+    const { scrapeId, runId, reject } = wartend;
+    void this.beendeLogin(requestId);
+    this.emit({
+      type: 'login-done',
+      scrapeId,
+      runId,
+      message: `Anmeldung abgebrochen: ${grund}`,
+    });
+    reject(new Error(`Interaktive Anmeldung ${grund}`));
+    return true;
+  }
+
+  /**
+   * Screencast beenden, CDP-Sitzung loesen, Eintrag entfernen. Wird aus jedem
+   * Ausgang aufgerufen (fertig, abgebrochen, Zeit abgelaufen).
+   */
+  private async beendeLogin(requestId: string): Promise<void> {
+    const wartend = this.pendingLoginRequests.get(requestId);
+    if (!wartend) return;
+    this.pendingLoginRequests.delete(requestId);
+
+    if (wartend.timer) clearTimeout(wartend.timer);
+
+    if (wartend.cdp) {
+      try {
+        await wartend.cdp.send('Page.stopScreencast');
+      } catch {
+        // Seite kann schon weg sein — nicht weiter wichtig.
+      }
+      try {
+        await wartend.cdp.detach();
+      } catch {
+        // dito
+      }
     }
   }
 

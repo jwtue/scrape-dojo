@@ -923,4 +923,380 @@ describe('ScrapeEventsService', () => {
       expect((events[0].result as any).data).toBe('contains *** here');
     });
   });
+
+  describe('requestLogin / completeLogin', () => {
+    // Eine Seite, die sich wie Puppeteer verhaelt, aber nichts oeffnet.
+    const machePage = () => {
+      const cdp = {
+        handler: new Map<string, (daten: any) => void>(),
+        on(name: string, fn: (daten: any) => void) {
+          this.handler.set(name, fn);
+          return this;
+        },
+        send: vi.fn().mockResolvedValue(undefined),
+        detach: vi.fn().mockResolvedValue(undefined),
+      };
+      const page = {
+        url: () => 'https://example.test/signin',
+        viewport: () => ({ width: 1024, height: 768 }),
+        createCDPSession: vi.fn().mockResolvedValue(cdp),
+      };
+      return { page: page as any, cdp };
+    };
+
+    it('should resolve once the user reports the sign-in done', async () => {
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page } = machePage();
+
+      const warten = service.requestLogin(
+        'scrape-1',
+        'Bitte anmelden',
+        page,
+        'run-1',
+      );
+
+      expect(received.length).toBe(1);
+      expect(received[0].type).toBe('login-required');
+      const nutzlast = JSON.parse(received[0].message!);
+      expect(nutzlast.url).toBe('https://example.test/signin');
+      expect(nutzlast.viewport).toEqual({ width: 1024, height: 768 });
+
+      expect(service.completeLogin(nutzlast.requestId)).toBe(true);
+      await expect(warten).resolves.toBe('angemeldet');
+      expect(received.some((e) => e.type === 'login-done')).toBe(true);
+      sub.unsubscribe();
+    });
+
+    it('should stream frames and acknowledge each one', async () => {
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page, cdp } = machePage();
+
+      const warten = service.requestLogin('scrape-1', 'los', page);
+      const requestId = JSON.parse(received[0].message!).requestId;
+
+      // Der Screencast wird asynchron aufgesetzt.
+      await vi.waitFor(() =>
+        expect(cdp.handler.has('Page.screencastFrame')).toBe(true),
+      );
+      expect(cdp.send).toHaveBeenCalledWith(
+        'Page.startScreencast',
+        expect.objectContaining({ format: 'jpeg' }),
+      );
+
+      const bilder: any[] = [];
+      const bildSub = service
+        .getLoginFrames(requestId)
+        .subscribe((b) => bilder.push(b));
+
+      cdp.handler.get('Page.screencastFrame')!({
+        data: 'AAAA',
+        sessionId: 7,
+        metadata: { deviceWidth: 1024, deviceHeight: 768 },
+      });
+
+      expect(bilder.length).toBe(1);
+      expect(bilder[0].data).toBe('AAAA');
+      expect(bilder[0].width).toBe(1024);
+      // Ohne Bestaetigung schickt Chrome kein weiteres Bild.
+      await vi.waitFor(() =>
+        expect(cdp.send).toHaveBeenCalledWith('Page.screencastFrameAck', {
+          sessionId: 7,
+        }),
+      );
+
+      // Bilder duerfen NICHT im Workflow-Puffer landen: ein Screencast haette
+      // ihn binnen Sekunden geleert.
+      expect(
+        service.getWorkflowEvents().some((e) => (e as any).data === 'AAAA'),
+      ).toBe(false);
+
+      bildSub.unsubscribe();
+      service.completeLogin(requestId);
+      await warten;
+      sub.unsubscribe();
+    });
+
+    it('should only deliver frames of the requested login', async () => {
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page, cdp } = machePage();
+
+      const warten = service.requestLogin('scrape-1', 'los', page);
+      const requestId = JSON.parse(received[0].message!).requestId;
+      await vi.waitFor(() =>
+        expect(cdp.handler.has('Page.screencastFrame')).toBe(true),
+      );
+
+      const bilder: any[] = [];
+      const bildSub = service
+        .getLoginFrames('ein-anderer-request')
+        .subscribe((b) => bilder.push(b));
+
+      cdp.handler.get('Page.screencastFrame')!({
+        data: 'AAAA',
+        sessionId: 1,
+        metadata: { deviceWidth: 10, deviceHeight: 10 },
+      });
+
+      expect(bilder.length).toBe(0);
+      bildSub.unsubscribe();
+      service.completeLogin(requestId);
+      await warten;
+      sub.unsubscribe();
+    });
+
+    it('should stop the screencast and detach when done', async () => {
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page, cdp } = machePage();
+
+      const warten = service.requestLogin('scrape-1', 'los', page);
+      const requestId = JSON.parse(received[0].message!).requestId;
+      await vi.waitFor(() =>
+        expect(cdp.handler.has('Page.screencastFrame')).toBe(true),
+      );
+
+      service.completeLogin(requestId);
+      await warten;
+
+      await vi.waitFor(() => {
+        expect(cdp.send).toHaveBeenCalledWith('Page.stopScreencast');
+        expect(cdp.detach).toHaveBeenCalled();
+      });
+
+      // Danach ist der Request weg: ein zweites "fertig" findet nichts mehr.
+      expect(service.completeLogin(requestId)).toBe(false);
+      sub.unsubscribe();
+    });
+
+    // Der Kern des Komforts: erkennt der Lauf die Anmeldung selbst, muss
+    // niemand auf "fertig" klicken.
+    it('should resolve by itself once the check succeeds', async () => {
+      vi.useFakeTimers();
+      const { page } = machePage();
+      let angemeldet = false;
+
+      const warten = service.requestLogin(
+        'scrape-1',
+        'los',
+        page,
+        undefined,
+        0,
+        async () => angemeldet,
+      );
+
+      await vi.advanceTimersByTimeAsync(2000);
+      angemeldet = true;
+      await vi.advanceTimersByTimeAsync(2000);
+
+      await expect(warten).resolves.toBe('erkannt');
+      vi.useRealTimers();
+    });
+
+    it('should keep waiting when the check throws during a navigation', async () => {
+      vi.useFakeTimers();
+      const { page } = machePage();
+      let versuche = 0;
+
+      const warten = service.requestLogin(
+        'scrape-1',
+        'los',
+        page,
+        undefined,
+        0,
+        async () => {
+          versuche++;
+          if (versuche < 3) {
+            throw new Error('Execution context was destroyed');
+          }
+          return true;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(6000);
+      await expect(warten).resolves.toBe('erkannt');
+      expect(versuche).toBeGreaterThanOrEqual(3);
+      vi.useRealTimers();
+    });
+
+    it('should reject when nobody signs in within the timeout', async () => {
+      vi.useFakeTimers();
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page } = machePage();
+
+      const warten = service.requestLogin(
+        'scrape-1',
+        'los',
+        page,
+        'run-1',
+        5000,
+      );
+      const erwartung = expect(warten).rejects.toThrow(
+        /Keine Anmeldung innerhalb von 5000 ms/,
+      );
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await erwartung;
+
+      expect(received.some((e) => e.type === 'login-timeout')).toBe(true);
+      sub.unsubscribe();
+      vi.useRealTimers();
+    });
+
+    it('should not reject after the sign-in arrived in time', async () => {
+      vi.useFakeTimers();
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page } = machePage();
+
+      const warten = service.requestLogin(
+        'scrape-1',
+        'los',
+        page,
+        'run-1',
+        5000,
+      );
+      const requestId = JSON.parse(received[0].message!).requestId;
+
+      service.completeLogin(requestId);
+      await expect(warten).resolves.toBe('angemeldet');
+
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(received.some((e) => e.type === 'login-timeout')).toBe(false);
+      sub.unsubscribe();
+      vi.useRealTimers();
+    });
+
+    // Abbruch muss den Lauf scheitern lassen. Stumm ohne Sitzung weiterlaufen
+    // waere schlimmer: der Lauf meldete dann "0 Belege" statt eines Fehlers.
+    it('should reject when the user cancels', async () => {
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const { page } = machePage();
+
+      const warten = service.requestLogin('scrape-1', 'los', page);
+      const requestId = JSON.parse(received[0].message!).requestId;
+
+      expect(service.cancelLogin(requestId)).toBe(true);
+      await expect(warten).rejects.toThrow(/abgebrochen/);
+      sub.unsubscribe();
+    });
+
+    it('should report an unknown request instead of throwing', async () => {
+      expect(service.completeLogin('gibtsnicht')).toBe(false);
+      expect(service.cancelLogin('gibtsnicht')).toBe(false);
+      await expect(
+        service.forwardLoginInput('gibtsnicht', {
+          kind: 'text',
+          text: 'hallo',
+        }),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe('forwardLoginInput', () => {
+    const machePage = () => {
+      const cdp = {
+        on: vi.fn().mockReturnThis(),
+        send: vi.fn().mockResolvedValue(undefined),
+        detach: vi.fn().mockResolvedValue(undefined),
+      };
+      const page = {
+        url: () => 'https://example.test/signin',
+        viewport: () => ({ width: 1024, height: 768 }),
+        createCDPSession: vi.fn().mockResolvedValue(cdp),
+      };
+      return { page: page as any, cdp };
+    };
+
+    const starte = async (service: ScrapeEventsService, page: any) => {
+      const received: ScrapeEvent[] = [];
+      const sub = service.getEvents().subscribe((e) => received.push(e));
+      const warten = service.requestLogin('scrape-1', 'los', page);
+      const requestId = JSON.parse(received[0].message!).requestId;
+      // Auf die CDP-Sitzung warten, sonst gibt es nichts zu senden.
+      await vi.waitFor(() =>
+        expect((page.createCDPSession as any).mock.calls.length).toBe(1),
+      );
+      await Promise.resolve();
+      return { requestId, warten, sub };
+    };
+
+    it('should dispatch a click at the page coordinates', async () => {
+      const { page, cdp } = machePage();
+      const { requestId, warten, sub } = await starte(service, page);
+
+      await expect(
+        service.forwardLoginInput(requestId, {
+          kind: 'mouse',
+          type: 'mousePressed',
+          x: 12.4,
+          y: 80.6,
+        }),
+      ).resolves.toBe(true);
+
+      expect(cdp.send).toHaveBeenCalledWith(
+        'Input.dispatchMouseEvent',
+        expect.objectContaining({
+          type: 'mousePressed',
+          // Chrome verlangt ganze Zahlen.
+          x: 12,
+          y: 81,
+          button: 'left',
+        }),
+      );
+
+      service.completeLogin(requestId);
+      await warten;
+      sub.unsubscribe();
+    });
+
+    it('should dispatch keys and inserted text', async () => {
+      const { page, cdp } = machePage();
+      const { requestId, warten, sub } = await starte(service, page);
+
+      await service.forwardLoginInput(requestId, {
+        kind: 'key',
+        type: 'keyDown',
+        key: 'Enter',
+        code: 'Enter',
+      });
+      expect(cdp.send).toHaveBeenCalledWith(
+        'Input.dispatchKeyEvent',
+        expect.objectContaining({ type: 'keyDown', key: 'Enter' }),
+      );
+
+      await service.forwardLoginInput(requestId, {
+        kind: 'text',
+        text: 'eingefuegt',
+      });
+      expect(cdp.send).toHaveBeenCalledWith('Input.insertText', {
+        text: 'eingefuegt',
+      });
+
+      service.completeLogin(requestId);
+      await warten;
+      sub.unsubscribe();
+    });
+
+    it('should report a failed dispatch instead of throwing', async () => {
+      const { page, cdp } = machePage();
+      const { requestId, warten, sub } = await starte(service, page);
+
+      cdp.send.mockRejectedValueOnce(new Error('Target closed'));
+      await expect(
+        service.forwardLoginInput(requestId, {
+          kind: 'text',
+          text: 'x',
+        }),
+      ).resolves.toBe(false);
+
+      service.completeLogin(requestId);
+      await warten;
+      sub.unsubscribe();
+    });
+  });
 });

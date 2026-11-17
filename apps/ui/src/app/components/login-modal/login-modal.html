@@ -1,0 +1,47 @@
+<app-modal [isOpen]="isOpen()" [title]="'login.title' | transloco" icon="UserCheck" size="full"
+    [showFooter]="true" [closeOnBackdrop]="false" (closed)="abbrechen()">
+
+    @if (loginRequest(); as anfrage) {
+    <div class="flex flex-col h-full gap-3">
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <p class="text-dojo-text text-sm">{{ anfrage.message }}</p>
+                <p class="text-dojo-text-muted text-xs mt-1 font-mono truncate">{{ anfrage.url }}</p>
+            </div>
+            @if (restSekunden() !== null) {
+            <p class="text-dojo-text-muted text-xs whitespace-nowrap">
+                {{ 'login.remaining' | transloco }}: {{ restSekunden() }}s
+            </p>
+            }
+        </div>
+
+        <!-- Live-Ansicht. tabindex macht den Rahmen fokussierbar, sonst
+             bekommt er keine Tastatureingaben. -->
+        <div class="flex-1 min-h-0 flex items-center justify-center bg-dojo-bg border border-dojo-border rounded-md overflow-hidden outline-none focus:ring-1 focus:ring-dojo-accent"
+            tabindex="0" (keydown)="onKeyDown($event)" (paste)="onPaste($event)">
+            @if (frame(); as bildDaten) {
+            <img #bild [src]="bildDaten" alt="" draggable="false" class="max-w-full max-h-full object-contain cursor-default"
+                (mousedown)="onMouseDown($event)" (mouseup)="onMouseUp($event)" (mousemove)="onMouseMove($event)"
+                (wheel)="onWheel($event)" (contextmenu)="$event.preventDefault()">
+            } @else {
+            <div class="text-center p-8">
+                <p class="text-dojo-text-muted text-sm">{{ 'login.waiting_for_stream' | transloco }}</p>
+            </div>
+            }
+        </div>
+
+        <p class="text-dojo-text-muted text-xs">{{ 'login.hint' | transloco }}</p>
+    </div>
+    }
+
+    <ng-container modal-footer>
+        <div class="flex gap-2 w-full">
+            <app-button variant="outline" class="flex-1" (clicked)="abbrechen()">
+                {{ 'login.cancel' | transloco }}
+            </app-button>
+            <app-button variant="success" class="flex-1" (clicked)="fertig()">
+                {{ 'login.done' | transloco }}
+            </app-button>
+        </div>
+    </ng-container>
+</app-modal>

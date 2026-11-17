@@ -19,6 +19,7 @@ import {
   RunHistoryItem,
   Scrape,
   OtpRequest,
+  LoginRequest,
   RunStepItem,
   RunActionItem,
   ScrapeSchedule,
@@ -40,6 +41,7 @@ import {
 import { WorkflowVisualizerComponent } from '../../components/workflow-visualizer/workflow-visualizer';
 import { RunDebugViewComponent } from '../../components/run-debug-view/run-debug-view';
 import { OtpModalComponent } from '../../components/otp-modal/otp-modal';
+import { LoginModalComponent } from '../../components/login-modal/login-modal';
 import {
   WorkflowVariable,
   RunDialogResult,
@@ -65,6 +67,7 @@ import 'iconify-icon';
     WorkflowVisualizerComponent,
     RunDebugViewComponent,
     OtpModalComponent,
+    LoginModalComponent,
     WorkflowVariablesComponent,
     NotificationModalComponent,
   ],
@@ -98,6 +101,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // OTP Modal data (modal opened via router)
   otpRequest = signal<OtpRequest | null>(null);
   otpCode = signal('');
+
+  // Interaktive Anmeldung: der Lauf haelt an und zeigt seine Seite.
+  loginRequest = signal<LoginRequest | null>(null);
 
   // Run Dialog data (modal opened via router)
   runDialogVariables = signal<WorkflowVariable[]>([]);
@@ -511,6 +517,27 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (event.type === 'otp-timeout' && isCurrentScrape) {
       this.otpRequest.set(null);
       this.otpCode.set('');
+      return;
+    }
+
+    // Interaktive Anmeldung: Live-Ansicht aufmachen.
+    if (event.type === 'login-required' && event.message && isCurrentScrape) {
+      try {
+        this.loginRequest.set(JSON.parse(event.message) as LoginRequest);
+      } catch (e) {
+        console.error('Failed to parse login request:', e);
+      }
+      return;
+    }
+
+    // Fertig, abgebrochen oder Zeit abgelaufen — in allen drei Faellen hat die
+    // Live-Ansicht keinen Zweck mehr und muss weg, sonst klickt man in ein
+    // Bild, das niemand mehr liest.
+    if (
+      (event.type === 'login-done' || event.type === 'login-timeout') &&
+      isCurrentScrape
+    ) {
+      this.loginRequest.set(null);
       return;
     }
 

@@ -11,6 +11,7 @@ import './extractAll.action';
 import './file-exists.action';
 import './get.action';
 import './getAll.action';
+import './interactive-login.action';
 import './keyboard-press.action';
 import './logger.action';
 import './loop.action';
